@@ -3,7 +3,10 @@ package com.example.videostreaming
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
+import android.view.View
 import android.widget.Button
+import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -12,6 +15,7 @@ import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ServerValue
 import com.google.firebase.database.ValueEventListener
 import org.webrtc.AudioTrack
 import org.webrtc.Camera1Enumerator
@@ -37,6 +41,10 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var localView: SurfaceViewRenderer
     private lateinit var remoteView: SurfaceViewRenderer
+    private lateinit var joinCallButton: Button
+    private lateinit var disconnectButton: Button
+    private lateinit var loadingOverlay: View
+    private lateinit var waitingText: TextView
     private lateinit var peerConnectionFactory: PeerConnectionFactory
     private lateinit var localVideoTrack: VideoTrack
     private lateinit var localAudioTrack: AudioTrack
@@ -44,7 +52,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var localStream: MediaStream
     private lateinit var peerConnection: PeerConnection
     private lateinit var db: DatabaseReference
-    private var roomId: String = "room123" // Replace with dynamic matching later
+    private var roomId: String? = null
     private var isCaller = false
 
     private val iceServers = listOf(
@@ -68,6 +76,13 @@ class MainActivity : AppCompatActivity() {
         // Views
         localView = findViewById(R.id.localView)
         remoteView = findViewById(R.id.remoteView)
+        joinCallButton = findViewById(R.id.joinCallButton)
+        disconnectButton = findViewById(R.id.disconnectButton)
+        loadingOverlay = findViewById(R.id.loadingOverlay)
+        waitingText = findViewById(R.id.waitingText)
+
+        // Initially hide loading overlay
+        loadingOverlay.visibility = View.GONE
 
         // Permissions
         if (allPermissionsGranted()) {
@@ -82,13 +97,162 @@ class MainActivity : AppCompatActivity() {
                 1
             )
         }
-        findViewById<Button>(R.id.btnStartMatching).setOnClickListener {
-            startCall()
-            listenForCalleeCandidates()
+
+        joinCallButton.setOnClickListener {
+            findOrCreateRoom()
         }
-        findViewById<Button>(R.id.joinCallButton).setOnClickListener {
-            joinCall()
-            listenForCallerCandidates()
+
+        disconnectButton.setOnClickListener {
+            disconnectCall()
+        }
+    }
+
+    private fun findOrCreateRoom() {
+        loadingOverlay.visibility = View.VISIBLE
+        waitingText.text = "Finding someone to chat with..."
+        joinCallButton.visibility = View.GONE
+
+        // Query for rooms in waiting state
+        db.child("rooms")
+            .orderByChild("status")
+            .equalTo("waiting")
+            .limitToFirst(1)
+            .get()
+            .addOnSuccessListener { snapshot ->
+                if (snapshot.exists()) {
+                    // Found a waiting room, join it
+                    val roomEntry = snapshot.children.first()
+                    roomId = roomEntry.key
+                    Log.d("WebRTC", "Found waiting room: $roomId")
+                    
+                    // Update room status to matched
+                    db.child("rooms").child(roomId!!).child("status").setValue("matched")
+                        .addOnSuccessListener {
+                            // Join the room
+                            isCaller = false
+                            joinExistingRoom(roomId!!)
+                        }
+                } else {
+                    // No waiting rooms found, create new room
+                    createNewRoom()
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.e("WebRTC", "Error finding room: ${e.message}")
+                loadingOverlay.visibility = View.GONE
+                joinCallButton.visibility = View.VISIBLE
+                Toast.makeText(this, "Failed to connect", Toast.LENGTH_SHORT).show()
+            }
+    }
+
+    private fun createNewRoom() {
+        roomId = db.child("rooms").push().key
+        if (roomId == null) {
+            Log.e("WebRTC", "Couldn't generate room key")
+            return
+        }
+
+        val roomData = mapOf(
+            "created" to ServerValue.TIMESTAMP,
+            "status" to "waiting"
+        )
+
+        db.child("rooms").child(roomId!!).setValue(roomData)
+            .addOnSuccessListener {
+                Log.d("WebRTC", "Created new room: $roomId")
+                isCaller = true
+                waitingText.text = "Waiting for someone to join..."
+                
+                // Start listening for room status changes
+                listenForRoomMatch()
+                
+                // Create WebRTC offer
+                startCall()
+            }
+            .addOnFailureListener { e ->
+                Log.e("WebRTC", "Failed to create room: ${e.message}")
+                loadingOverlay.visibility = View.GONE
+                joinCallButton.visibility = View.VISIBLE
+            }
+    }
+
+    private fun joinExistingRoom(roomId: String) {
+        Log.d("WebRTC", "Joining room: $roomId")
+        waitingText.text = "Connecting to peer..."
+        
+        // Listen for offer and join
+        db.child("rooms").child(roomId).child("offer")
+            .get()
+            .addOnSuccessListener { snapshot ->
+                if (snapshot.exists()) {
+                    val type = snapshot.child("type").getValue(String::class.java)
+                    val sdp = snapshot.child("sdp").getValue(String::class.java)
+                    if (type != null && sdp != null) {
+                        joinCall()
+                        listenForCallerCandidates()
+                    } else {
+                        Log.e("WebRTC", "Invalid offer data")
+                        handleConnectionError()
+                    }
+                } else {
+                    Log.e("WebRTC", "No offer found")
+                    handleConnectionError()
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.e("WebRTC", "Failed to get offer: ${e.message}")
+                handleConnectionError()
+            }
+    }
+
+    private fun listenForRoomMatch() {
+        roomId?.let { currentRoomId ->
+            db.child("rooms").child(currentRoomId).child("status")
+                .addValueEventListener(object : ValueEventListener {
+                    override fun onDataChange(snapshot: DataSnapshot) {
+                        val status = snapshot.getValue(String::class.java)
+                        when (status) {
+                            "matched" -> {
+                                if (isCaller) {
+                                    waitingText.text = "Someone joined! Connecting..."
+                                    listenForAnswer()
+                                    listenForCalleeCandidates()
+                                }
+                            }
+                            "disconnected" -> {
+                                if (this@MainActivity::peerConnection.isInitialized) {
+                                    disconnectCall()
+                                }
+                            }
+                        }
+                    }
+
+                    override fun onCancelled(error: DatabaseError) {
+                        Log.e("WebRTC", "Room status listener cancelled: ${error.message}")
+                    }
+                })
+        }
+    }
+
+    private fun handleConnectionError() {
+        Toast.makeText(this, "Connection failed. Please try again.", Toast.LENGTH_SHORT).show()
+        loadingOverlay.visibility = View.GONE
+        joinCallButton.visibility = View.VISIBLE
+        roomId?.let { currentRoomId ->
+            db.child("rooms").child(currentRoomId).removeValue()
+        }
+        roomId = null
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Clean up room if we're the creator and it's still in waiting state
+        roomId?.let { currentRoomId ->
+            db.child("rooms").child(currentRoomId).get().addOnSuccessListener { snapshot ->
+                if (snapshot.exists() && snapshot.child("status").getValue(String::class.java) == "waiting") {
+                    db.child("rooms").child(currentRoomId).removeValue()
+                }
+            }
         }
     }
 
@@ -200,7 +364,7 @@ class MainActivity : AppCompatActivity() {
                             "candidate" to candidate.sdp
                         )
                         val candidateType = if (isCaller) "callerCandidates" else "calleeCandidates"
-                        db.child("rooms").child(roomId).child(candidateType).push()
+                        db.child("rooms").child(roomId!!).child(candidateType).push()
                             .setValue(candidateMap)
                     }
                 }
@@ -226,6 +390,35 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onConnectionChange(newState: PeerConnection.PeerConnectionState?) {
                     Log.d("WebRTC", "Connection State: $newState")
+                    runOnUiThread {
+                        when (newState) {
+                            PeerConnection.PeerConnectionState.CONNECTED -> {
+                                // Hide loading overlay and show disconnect button
+                                loadingOverlay.visibility = View.GONE
+                                disconnectButton.visibility = View.VISIBLE
+                                joinCallButton.visibility = View.GONE
+                            }
+                            PeerConnection.PeerConnectionState.DISCONNECTED,
+                            PeerConnection.PeerConnectionState.FAILED,
+                            PeerConnection.PeerConnectionState.CLOSED -> {
+                                // Show join button and hide others
+                                loadingOverlay.visibility = View.GONE
+                                disconnectButton.visibility = View.GONE
+                                joinCallButton.visibility = View.VISIBLE
+                            }
+                            PeerConnection.PeerConnectionState.CONNECTING -> {
+                                // Show loading overlay with connecting message
+                                loadingOverlay.visibility = View.VISIBLE
+                                waitingText.text = "Connecting..."
+                                disconnectButton.visibility = View.GONE
+                                joinCallButton.visibility = View.GONE
+                            }
+                            else -> { /* No changes needed for other states */ }
+                        }
+                    }
+                    if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
+                        listenForCallStatus()
+                    }
                 }
 
                 override fun onSignalingChange(newState: PeerConnection.SignalingState?) {
@@ -245,39 +438,68 @@ class MainActivity : AppCompatActivity() {
 
     private fun startCall() {
         isCaller = true
+        Log.d("WebRTC", "Starting call as caller")
+        
+        // Create room in Firebase
+        val roomData = mapOf(
+            "created" to System.currentTimeMillis(),
+            "status" to "waiting"
+        )
+        
+        db.child("rooms").child(roomId!!).setValue(roomData)
+            .addOnSuccessListener {
+                Log.d("WebRTC", "Room created successfully")
+                // Create and send offer
+                createOffer()
+                // Start listening for callee candidates
+                listenForCalleeCandidates()
+            }
+            .addOnFailureListener { e ->
+                Log.e("WebRTC", "Failed to create room: ${e.message}")
+                Toast.makeText(this, "Failed to create call room", Toast.LENGTH_SHORT).show()
+                loadingOverlay.visibility = View.GONE
+                joinCallButton.visibility = View.VISIBLE
+            }
+    }
+
+    private fun createOffer() {
         peerConnection.createOffer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {
+                Log.d("WebRTC", "Offer created successfully")
                 if (desc != null) {
                     peerConnection.setLocalDescription(object : SdpObserver {
                         override fun onSetSuccess() {
-                            Log.d("WebRTC", "Local description set. Send offer to Firebase.")
-                            Log.d("WebRTC", "Remote description set successfully")
-
-                            db.child("rooms").child(roomId).child("offer").setValue(
+                            Log.d("WebRTC", "Local description set. Sending offer to Firebase.")
+                            db.child("rooms").child(roomId!!).child("offer").setValue(
                                 mapOf(
                                     "type" to desc.type.canonicalForm(),
                                     "sdp" to desc.description
                                 )
-                            )
-
-                            listenForAnswer()
+                            ).addOnSuccessListener {
+                                Log.d("WebRTC", "Offer saved to Firebase successfully")
+                                listenForAnswer()
+                            }.addOnFailureListener { e ->
+                                Log.e("WebRTC", "Failed to save offer: ${e.message}")
+                            }
                         }
-
-                        override fun onSetFailure(p0: String?) {}
+                        override fun onSetFailure(p0: String?) {
+                            Log.e("WebRTC", "Failed to set local description: $p0")
+                        }
                         override fun onCreateSuccess(p0: SessionDescription?) {}
                         override fun onCreateFailure(p0: String?) {}
                     }, desc)
                 }
             }
-
-            override fun onCreateFailure(reason: String?) {}
+            override fun onCreateFailure(reason: String?) {
+                Log.e("WebRTC", "Failed to create offer: $reason")
+            }
             override fun onSetSuccess() {}
             override fun onSetFailure(p0: String?) {}
         }, sdpConstraints)
     }
 
     private fun listenForAnswer() {
-        db.child("rooms").child(roomId).child("answer").addValueEventListener(object :
+        db.child("rooms").child(roomId!!).child("answer").addValueEventListener(object :
             ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val sdp = snapshot.child("sdp").getValue(String::class.java)
@@ -304,7 +526,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun listenForCalleeCandidates() {
-        db.child("rooms").child(roomId).child("calleeCandidates")
+        db.child("rooms").child(roomId!!).child("calleeCandidates")
             .addChildEventListener(object : ChildEventListener {
                 override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
                     val candidate = IceCandidate(
@@ -325,13 +547,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun joinCall() {
         isCaller = false
-        db.child("rooms").child(roomId).child("offer")
+        Log.d("WebRTC", "Joining call as callee")
+        loadingOverlay.visibility = View.VISIBLE
+        waitingText.text = "Connecting to call..."
+        joinCallButton.visibility = View.GONE
+
+        // Start listening for ICE candidates from caller
+        listenForCallerCandidates()
+        
+        db.child("rooms").child(roomId!!).child("offer")
             .addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
                     val type = snapshot.child("type").getValue(String::class.java)
                     val sdp = snapshot.child("sdp").getValue(String::class.java)
 
                     if (sdp != null && type != null) {
+                        Log.d("WebRTC", "Got offer from Firebase, setting remote description")
                         val sessionDescription = SessionDescription(
                             SessionDescription.Type.fromCanonicalForm(type),
                             sdp
@@ -339,52 +570,60 @@ class MainActivity : AppCompatActivity() {
 
                         peerConnection.setRemoteDescription(object : SdpObserver {
                             override fun onSetSuccess() {
-                                Log.d("WebRTC", "Offer set as remote description")
+                                Log.d("WebRTC", "Remote description set, creating answer")
                                 createAnswer()
                             }
-
-                            override fun onSetFailure(p0: String?) {}
+                            override fun onSetFailure(p0: String?) {
+                                Log.e("WebRTC", "Failed to set remote description: $p0")
+                            }
                             override fun onCreateSuccess(p0: SessionDescription?) {}
                             override fun onCreateFailure(p0: String?) {}
                         }, sessionDescription)
                     }
                 }
-
-                override fun onCancelled(error: DatabaseError) {}
+                override fun onCancelled(error: DatabaseError) {
+                    Log.e("WebRTC", "Failed to get offer: ${error.message}")
+                    loadingOverlay.visibility = View.GONE
+                    joinCallButton.visibility = View.VISIBLE
+                    Toast.makeText(this@MainActivity, "Failed to join call", Toast.LENGTH_SHORT).show()
+                }
             })
     }
 
     private fun createAnswer() {
+        Log.d("WebRTC", "Creating answer")
         peerConnection.createAnswer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription?) {
                 if (desc != null) {
+                    Log.d("WebRTC", "Answer created, setting local description")
                     peerConnection.setLocalDescription(object : SdpObserver {
                         override fun onSetSuccess() {
-                            // Send answer to Firebase
-                            db.child("rooms").child(roomId).child("answer").setValue(
+                            Log.d("WebRTC", "Local description set, sending answer to Firebase")
+                            db.child("rooms").child(roomId!!).child("answer").setValue(
                                 mapOf(
                                     "type" to desc.type.canonicalForm(),
                                     "sdp" to desc.description
                                 )
                             )
-                            Log.d("WebRTC", "Answer created and sent.")
                         }
-
-                        override fun onSetFailure(p0: String?) {}
+                        override fun onSetFailure(p0: String?) {
+                            Log.e("WebRTC", "Failed to set local description: $p0")
+                        }
                         override fun onCreateSuccess(p0: SessionDescription?) {}
                         override fun onCreateFailure(p0: String?) {}
                     }, desc)
                 }
             }
-
-            override fun onCreateFailure(reason: String?) {}
+            override fun onCreateFailure(reason: String?) {
+                Log.e("WebRTC", "Failed to create answer: $reason")
+            }
             override fun onSetSuccess() {}
             override fun onSetFailure(p0: String?) {}
         }, sdpConstraints)
     }
 
     private fun listenForCallerCandidates() {
-        db.child("rooms").child(roomId).child("callerCandidates")
+        db.child("rooms").child(roomId!!).child("callerCandidates")
             .addChildEventListener(object : ChildEventListener {
                 override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
                     val candidate = IceCandidate(
@@ -402,5 +641,42 @@ class MainActivity : AppCompatActivity() {
             })
     }
 
+    private fun disconnectCall() {
+        // Notify other peer about disconnection
+        db.child("rooms").child(roomId!!).child("status").setValue("disconnected")
+        
+        // Clean up WebRTC resources
+        peerConnection.close()
+        videoCapturer.dispose()
+        localView.release()
+        remoteView.release()
+        
+        // Update UI
+        loadingOverlay.visibility = View.GONE
+        disconnectButton.visibility = View.GONE
+        joinCallButton.visibility = View.VISIBLE
+        
+        // Show a toast message
+        Toast.makeText(this, "Call ended", Toast.LENGTH_SHORT).show()
+        
+        // Optional: Finish the activity or reset the connection
+        finish()
+    }
+
+    private fun listenForCallStatus() {
+        db.child("rooms").child(roomId!!).child("status")
+            .addValueEventListener(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val status = snapshot.getValue(String::class.java)
+                    if (status == "disconnected") {
+                        // Other peer has disconnected
+                        Toast.makeText(this@MainActivity, "Call ended by other peer", Toast.LENGTH_SHORT).show()
+                        disconnectCall()
+                    }
+                }
+
+                override fun onCancelled(error: DatabaseError) {}
+            })
+    }
 
 }
