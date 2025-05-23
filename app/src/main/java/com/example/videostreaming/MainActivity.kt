@@ -235,7 +235,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleConnectionError() {
-        Toast.makeText(this, "Connection failed. Please try again.", Toast.LENGTH_SHORT).show()
         loadingOverlay.visibility = View.GONE
         joinCallButton.visibility = View.VISIBLE
         roomId?.let { currentRoomId ->
@@ -456,7 +455,6 @@ class MainActivity : AppCompatActivity() {
             }
             .addOnFailureListener { e ->
                 Log.e("WebRTC", "Failed to create room: ${e.message}")
-                Toast.makeText(this, "Failed to create call room", Toast.LENGTH_SHORT).show()
                 loadingOverlay.visibility = View.GONE
                 joinCallButton.visibility = View.VISIBLE
             }
@@ -585,7 +583,6 @@ class MainActivity : AppCompatActivity() {
                     Log.e("WebRTC", "Failed to get offer: ${error.message}")
                     loadingOverlay.visibility = View.GONE
                     joinCallButton.visibility = View.VISIBLE
-                    Toast.makeText(this@MainActivity, "Failed to join call", Toast.LENGTH_SHORT).show()
                 }
             })
     }
@@ -643,7 +640,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun disconnectCall() {
         // Notify other peer about disconnection
-        db.child("rooms").child(roomId!!).child("status").setValue("disconnected")
+        if (::db.isInitialized) {
+            db.child("rooms").child(roomId!!).child("status").setValue("disconnected")
+        }
         
         // Clean up WebRTC resources
         peerConnection.close()
@@ -679,4 +678,8 @@ class MainActivity : AppCompatActivity() {
             })
     }
 
+    override fun onBackPressed() {
+        disconnectCall()
+        super.onBackPressed()
+    }
 }
