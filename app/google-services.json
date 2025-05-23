@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "164198284232",
+    "project_id": "webrtctest-11be6",
+    "storage_bucket": "webrtctest-11be6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:164198284232:android:fe07b5d099499455bb5efd",
+        "android_client_info": {
+          "package_name": "com.example.videostreaming"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDpBguezjruD8biKTLuJtkrKAwWoZKyHjU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
