@@ -655,11 +655,8 @@ class MainActivity : AppCompatActivity() {
         disconnectButton.visibility = View.GONE
         joinCallButton.visibility = View.VISIBLE
         
-        // Show a toast message
-        Toast.makeText(this, "Call ended", Toast.LENGTH_SHORT).show()
-        
         // Optional: Finish the activity or reset the connection
-        finish()
+        //finish()
     }
 
     private fun listenForCallStatus() {
@@ -669,7 +666,7 @@ class MainActivity : AppCompatActivity() {
                     val status = snapshot.getValue(String::class.java)
                     if (status == "disconnected") {
                         // Other peer has disconnected
-                        Toast.makeText(this@MainActivity, "Call ended by other peer", Toast.LENGTH_SHORT).show()
+
                         disconnectCall()
                     }
                 }

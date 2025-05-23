@@ -1,0 +1,33 @@
+Flows
+1. User Joins a Call
+User clicks the "Join Call" button.
+App checks for available rooms in the "waiting" state.
+If a room is found:
+User joins the room.
+App retrieves the offer from Firebase.
+App sets the remote description and creates an answer.
+App sends the answer to Firebase.
+App listens for ICE candidates from the caller.
+If no room is found:
+App creates a new room in Firebase.
+App sets the room status to "waiting."
+App creates an offer and sends it to Firebase.
+App listens for an answer and ICE candidates from the callee.
+
+2. User Disconnects a Call
+User clicks the "Disconnect" button.
+App updates the room status in Firebase to "disconnected."
+App closes the PeerConnection and releases WebRTC resources.
+App resets the UI to allow the user to join another call.
+
+3. Call Connection Flow
+Caller creates an offer and sets it as the local description.
+Caller sends the offer to Firebase.
+Callee retrieves the offer, sets it as the remote description, and creates an answer.
+Callee sends the answer to Firebase.
+Both peers exchange ICE candidates via Firebase.
+Connection state transitions to CONNECTED.
+
+4. Error Handling
+If Firebase operations fail (e.g., room creation, offer retrieval), the app shows an error message and resets the UI.
+If the connection state transitions to FAILED or DISCONNECTED, the app resets the UI and allows the user to reconnect.

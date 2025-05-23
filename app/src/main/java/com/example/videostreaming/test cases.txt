@@ -1,0 +1,56 @@
+1. Join Call - Success
+Precondition: Firebase has at least one room in the "waiting" state.
+Steps:
+Click the "Join Call" button.
+Verify that the app joins the room and retrieves the offer.
+Verify that the app sets the remote description and creates an answer.
+Verify that the answer is sent to Firebase.
+Expected Result: The app connects to the call successfully.
+
+2. Join Call - No Available Rooms
+Precondition: Firebase has no rooms in the "waiting" state.
+Steps:
+Click the "Join Call" button.
+Verify that the app creates a new room in Firebase.
+Verify that the app sets the room status to "waiting."
+Expected Result: The app waits for another user to join.
+
+3. Disconnect Call
+Precondition: User is in an active call.
+Steps:
+Click the "Disconnect" button.
+Verify that the app updates the room status to "disconnected."
+Verify that the PeerConnection is closed and resources are released.
+Expected Result: The app resets the UI and allows the user to join another call.
+
+4. Connection State - Failed
+Precondition: Network issues or ICE candidate exchange failure.
+Steps:
+Simulate a network issue or failure in ICE candidate exchange.
+Verify that the connection state transitions to FAILED.
+Verify that the app resets the UI and allows the user to reconnect.
+Expected Result: The app handles the failure gracefully.
+
+5. Permission Denied
+Precondition: User denies camera or microphone permissions.
+Steps:
+Launch the app without granting permissions.
+Verify that the app requests permissions.
+Deny the permissions.
+Expected Result: The app shows an error message and does not proceed with the call.
+
+6. Remote Video Not Displayed
+Precondition: Remote video track is received but not rendered.
+Steps:
+Simulate receiving a remote video track.
+Verify that the track is added to the remoteView sink.
+Verify that the remoteView is initialized and visible.
+Expected Result: The remote video is displayed correctly.
+
+7. Firebase Error Handling
+Precondition: Firebase operations fail (e.g., room creation, offer retrieval).
+Steps:
+Simulate a Firebase error (e.g., network issue).
+Verify that the app shows an error message.
+Verify that the app resets the UI.
+Expected Result: The app handles the error gracefully
