@@ -84,19 +84,7 @@ class MainActivity : AppCompatActivity() {
         // Initially hide loading overlay
         loadingOverlay.visibility = View.GONE
 
-        // Permissions
-        if (allPermissionsGranted()) {
-            initWebRTC()
-        } else {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(
-                    android.Manifest.permission.CAMERA,
-                    android.Manifest.permission.RECORD_AUDIO
-                ),
-                1
-            )
-        }
+        initWebRTC()
 
         joinCallButton.setOnClickListener {
             findOrCreateRoom()
@@ -255,14 +243,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun allPermissionsGranted(): Boolean {
-        return listOf(
-            android.Manifest.permission.CAMERA,
-            android.Manifest.permission.RECORD_AUDIO
-        ).all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
-        }
-    }
 
     private fun initWebRTC() {
         // Initialize EGL for video rendering
@@ -279,8 +259,8 @@ class MainActivity : AppCompatActivity() {
         remoteView.setEnableHardwareScaler(true)
         
         // Make sure both views are visible
-        localView.visibility = android.view.View.VISIBLE
-        remoteView.visibility = android.view.View.VISIBLE
+        localView.visibility = View.VISIBLE
+        remoteView.visibility = View.VISIBLE
 
         // Initialize PeerConnectionFactory
         PeerConnectionFactory.initialize(
@@ -656,7 +636,7 @@ class MainActivity : AppCompatActivity() {
         joinCallButton.visibility = View.VISIBLE
         
         // Optional: Finish the activity or reset the connection
-        //finish()
+        finish()
     }
 
     private fun listenForCallStatus() {
